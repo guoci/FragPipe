@@ -1,4 +1,6 @@
+import collections
 import concurrent.futures
+import csv
 import datetime
 import io
 import itertools
@@ -309,6 +311,58 @@ def write_pepxml(infile):
 				print(f'Writing: {infile.stem}\tspectrum: {i}')
 		f.write(b'</msms_run_summary>\n</msms_pipeline_analysis>\n')
 
+
+def write_pin(infile):
+	if not all([(tempdir_part / (infile.stem + '.pin')).exists() for tempdir_part in tempdir_parts]):
+		return
+	expect_funcs = get_expect_functions(infile)
+	header = 'SpecId	Label	ScanNr	ExpMass	retentiontime	rank	abs_ppm	isotope_errors	log10_evalue	hyperscore	delta_hyperscore	matched_ion_num	complementary_ions	ion_series	weighted_average_abs_fragment_ppm	peptide_length	ntt	nmc	Peptide	Proteins'.split(
+		'\t')
+	rank_idx = header.index('rank')
+	log10_evalue_idx = header.index('log10_evalue')
+	hyperscore_idx = header.index('hyperscore')
+	delta_hyperscore_idx = header.index('delta_hyperscore')
+	pins = [read_pin(tempdir_part / (infile.stem + '.pin')) for tempdir_part in tempdir_parts]
+	spec_to_index_map = dict((k, int(v)) for k, v in itertools.chain.from_iterable(
+		[re.compile('<spectrum_query .*spectrum="(.+?)" .*index="(\\d+?)"').findall(
+			(tempdir_part / (infile.stem + '.pepXML')).read_text())
+			for tempdir_part in tempdir_parts]))
+
+	d = collections.defaultdict(list)
+	for pin in pins:
+		for k, v in pin.items():
+			d[k].extend(v)
+	sorted_spectrums = sorted([(spec_to_index_map[k], sorted([(float(e[hyperscore_idx]), e) for e in v], reverse=True))
+							   for k, v in d.items()])
+	del pins, d
+	for index, hits in sorted_spectrums:
+		for h1, h2 in zip(hits, hits[1:]):
+			delta_hyperscore = float(h1[0]) - float(h2[0])
+			h1[1][delta_hyperscore_idx] = str(delta_hyperscore)
+		for i, hit in enumerate(hits, 1):
+			hit[1][log10_evalue_idx] = str(np.log10(expect_funcs[index - 1](hit[0])))
+			hit[1][rank_idx] = str(i)
+			hit[1][0] = hit[1][0].rsplit('_', 1)[0] + '_' + str(i)
+
+	outfile = infile.with_suffix('.pin')
+	with pathlib.Path(outfile).open('w') as f:
+		f.write('\t'.join(header) + '\n')
+		for _, hits in sorted_spectrums:
+			for hit in hits[:output_report_topN]:
+				f.write('\t'.join(hit[1]) + '\n')
+
+
+def read_pin(p: pathlib.Path):
+	with p.open() as f:
+		reader = csv.reader(f, csv.excel_tab)
+		header = next(reader)
+		specId_idx = header.index('SpecId')
+		d = collections.defaultdict(list)
+		for row in reader:
+			d[row[specId_idx].rsplit('_', 1)[0]].append(row)
+	d.default_factory = None
+	return d
+
 def cpu_count():
 	try:
 		return len(os.sched_getaffinity(0))
@@ -319,7 +373,9 @@ def combine_results():
 	max_workers0 = min(len(infiles), cpu_count())
 	max_workers = min(max_workers0, 61) if sys.platform == 'win32' else max_workers0
 	with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as exe:
-		fs = [exe.submit(write_pepxml, infile) for infile in infiles]
+		fs1 = [exe.submit(write_pepxml, infile) for infile in infiles]
+		fs2 = [exe.submit(write_pin, infile) for infile in infiles]
+	fs = fs1 + fs2
 	for e in fs:
 		e.result()
 

@@ -315,13 +315,12 @@ def write_pepxml(infile):
 def write_pin(infile):
 	if not all([(tempdir_part / (infile.stem + '.pin')).exists() for tempdir_part in tempdir_parts]):
 		return
-	expect_funcs = get_expect_functions(infile)
-	header = 'SpecId	Label	ScanNr	ExpMass	retentiontime	rank	abs_ppm	isotope_errors	log10_evalue	hyperscore	delta_hyperscore	matched_ion_num	complementary_ions	ion_series	weighted_average_abs_fragment_ppm	peptide_length	ntt	nmc	Peptide	Proteins'.split(
-		'\t')
+	header = (tempdir_parts[0] / (infile.stem + '.pin')).read_text().splitlines()[0].split('\t')
 	rank_idx = header.index('rank')
-	log10_evalue_idx = header.index('log10_evalue')
 	hyperscore_idx = header.index('hyperscore')
-	delta_hyperscore_idx = header.index('delta_hyperscore')
+	log10_evalue_idx = header.index('log10_evalue') if 'log10_evalue' in header else None
+	delta_hyperscore_idx = header.index('delta_hyperscore') if 'delta_hyperscore' in header else None
+
 	pins = [read_pin(tempdir_part / (infile.stem + '.pin')) for tempdir_part in tempdir_parts]
 	spec_to_index_map = dict((k, int(v)) for k, v in itertools.chain.from_iterable(
 		[re.compile('<spectrum_query .*spectrum="(.+?)" .*index="(\\d+?)"').findall(
@@ -335,12 +334,15 @@ def write_pin(infile):
 	sorted_spectrums = sorted([(spec_to_index_map[k], sorted([(float(e[hyperscore_idx]), e) for e in v], reverse=True))
 							   for k, v in d.items()])
 	del pins, d
+	expect_funcs = None if log10_evalue_idx is None else get_expect_functions(infile)
 	for index, hits in sorted_spectrums:
-		for h1, h2 in zip(hits, hits[1:]):
-			delta_hyperscore = float(h1[0]) - float(h2[0])
-			h1[1][delta_hyperscore_idx] = str(delta_hyperscore)
+		if delta_hyperscore_idx is not None:
+			for h1, h2 in zip(hits, hits[1:]):
+				delta_hyperscore = float(h1[0]) - float(h2[0])
+				h1[1][delta_hyperscore_idx] = str(delta_hyperscore)
 		for i, hit in enumerate(hits, 1):
-			hit[1][log10_evalue_idx] = str(np.log10(expect_funcs[index - 1](hit[0])))
+			if log10_evalue_idx is not None:
+				hit[1][log10_evalue_idx] = str(np.log10(expect_funcs[index - 1](hit[0])))
 			hit[1][rank_idx] = str(i)
 			hit[1][0] = hit[1][0].rsplit('_', 1)[0] + '_' + str(i)
 

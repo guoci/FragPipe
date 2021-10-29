@@ -316,6 +316,8 @@ def write_pin(infile):
 	if not all([(tempdir_part / (infile.stem + '.pin')).exists() for tempdir_part in tempdir_parts]):
 		return
 	header = (tempdir_parts[0] / (infile.stem + '.pin')).read_text().splitlines()[0].split('\t')
+	proteins_idx = header.index('Proteins')
+	peptide_idx = header.index('Peptide')
 	rank_idx = header.index('rank')
 	hyperscore_idx = header.index('hyperscore')
 	log10_evalue_idx = header.index('log10_evalue') if 'log10_evalue' in header else None
@@ -331,21 +333,32 @@ def write_pin(infile):
 	for pin in pins:
 		for k, v in pin.items():
 			d[k].extend(v)
+	d.default_factory = None
 	sorted_spectrums = sorted([(spec_to_index_map[k], sorted([(float(e[hyperscore_idx]), e) for e in v], reverse=True))
 							   for k, v in d.items()])
 	del pins, d
 	expect_funcs = None if log10_evalue_idx is None else get_expect_functions(infile)
+	pep_alt_prot = collections.defaultdict(set)
+	def get_pep_seq(pep):
+		return re.compile('.\\.(.+?)\\..').fullmatch(pep).group(1)
 	for index, hits in sorted_spectrums:
 		if delta_hyperscore_idx is not None:
 			for h1, h2 in zip(hits, hits[1:]):
 				delta_hyperscore = float(h1[0]) - float(h2[0])
 				h1[1][delta_hyperscore_idx] = str(delta_hyperscore)
-		for i, hit in enumerate(hits, 1):
+		for rank, (hyperscore, row) in enumerate(hits, 1):
 			if log10_evalue_idx is not None:
-				hit[1][log10_evalue_idx] = str(np.log10(expect_funcs[index - 1](hit[0])))
-			hit[1][rank_idx] = str(i)
-			hit[1][0] = hit[1][0].rsplit('_', 1)[0] + '_' + str(i)
-
+				row[log10_evalue_idx] = str(np.log10(expect_funcs[index - 1](hyperscore)))
+			row[rank_idx] = str(rank)
+			row[0] = row[0].rsplit('_', 1)[0] + '_' + str(rank)
+			pep_alt_prot[get_pep_seq(row[peptide_idx])] |= set(row[proteins_idx:])-{''}
+	pep_alt_prot.default_factory = None
+	for index, hits in sorted_spectrums:
+		for rank, (hyperscore, row) in enumerate(hits, 1):
+			alt_prots = pep_alt_prot[get_pep_seq(row[peptide_idx])]
+			l1, l2 = len(set(row[proteins_idx:]) - {''}), len(alt_prots)
+			if l1 != l2:
+				row[proteins_idx:] = sorted(alt_prots)
 	outfile = infile.with_suffix('.pin')
 	with pathlib.Path(outfile).open('w') as f:
 		f.write('\t'.join(header) + '\n')

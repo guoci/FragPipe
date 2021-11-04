@@ -339,8 +339,6 @@ def write_pin(infile):
 	del pins, d
 	expect_funcs = None if log10_evalue_idx is None else get_expect_functions(infile)
 	pep_alt_prot = collections.defaultdict(set)
-	def get_pep_seq(pep):
-		return re.compile('.\\.(.+?)\\..').fullmatch(pep).group(1)
 	for index, hits in sorted_spectrums:
 		if delta_hyperscore_idx is not None:
 			for h1, h2 in zip(hits, hits[1:]):
@@ -351,11 +349,11 @@ def write_pin(infile):
 				row[log10_evalue_idx] = str(np.log10(expect_funcs[index - 1](hyperscore)))
 			row[rank_idx] = str(rank)
 			row[0] = row[0].rsplit('_', 1)[0] + '_' + str(rank)
-			pep_alt_prot[get_pep_seq(row[peptide_idx])] |= set(row[proteins_idx:])-{''}
+			pep_alt_prot[row[peptide_idx]] |= set(row[proteins_idx:])-{''}
 	pep_alt_prot.default_factory = None
 	for index, hits in sorted_spectrums:
 		for rank, (hyperscore, row) in enumerate(hits, 1):
-			alt_prots = pep_alt_prot[get_pep_seq(row[peptide_idx])]
+			alt_prots = pep_alt_prot[row[peptide_idx]]
 			l1, l2 = len(set(row[proteins_idx:]) - {''}), len(alt_prots)
 			if l1 != l2:
 				row[proteins_idx:] = sorted(alt_prots)

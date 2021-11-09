@@ -324,10 +324,12 @@ def write_pin(infile):
 	delta_hyperscore_idx = header.index('delta_hyperscore') if 'delta_hyperscore' in header else None
 
 	pins = [read_pin(tempdir_part / (infile.stem + '.pin')) for tempdir_part in tempdir_parts]
-	spec_to_index_map = dict((k, int(v)) for k, v in itertools.chain.from_iterable(
-		[re.compile('<spectrum_query .*spectrum="(.+?)" .*index="(\\d+?)"').findall(
-			(tempdir_part / (infile.stem + '.pepXML')).read_text())
-			for tempdir_part in tempdir_parts]))
+	spec_to_index_map = dict((k, int(v)) for k, v in itertools.chain.from_iterable([
+		[(spec[:spec.rindex('.')] + '.' + charge, idx)
+		 for charge, spec, idx in
+		 re.compile('<spectrum_query .*assumed_charge="(\\d+?)" .*spectrum="(.+?)" .*index="(\\d+?)"').findall(
+			 (tempdir_part / (infile.stem + '.pepXML')).read_text())]
+		for tempdir_part in tempdir_parts]))
 
 	d = collections.defaultdict(list)
 	for pin in pins:

@@ -48,8 +48,7 @@ num_parts_str, jvm_cmd_str, msfragger_jar_path_str, param_path_str, *infiles_str
 jvm_cmd = shlex.split(jvm_cmd_str, posix=False)
 msfragger_jar_path = pathlib.Path(msfragger_jar_path_str).resolve()
 param_path = pathlib.Path(param_path_str)
-infiles = [pathlib.Path(e) for e in infiles_str]
-jvm_cmd, msfragger_jar_path, param_path, infiles
+infiles: typing.List[pathlib.Path] = [pathlib.Path(e) for e in infiles_str]
 msfragger_cmd = jvm_cmd + [msfragger_jar_path]
 tempdir = pathlib.Path('./split_peptide_index_tempdir')
 params_txt = param_path.read_bytes().decode()
@@ -296,21 +295,51 @@ printf 'java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'"'"'T'"'"'HH:mm
 '''
 
 ##########
+def all_exists(files: typing.List[pathlib.Path]):
+	'''
+	:raise: if some file exists and some do not exists
+	:param files:
+	:return: if all files exists return true, if none exists return false
+	'''
+	s = {e.exists() for e in files}
+	if s == {True}: return True
+	if s == {False}: return False
+	raise RuntimeError([(e, e.exists()) for e in files])
 
-def write_pepxml(infile):
+
+def get_pepxmls(infile: pathlib.Path) -> (bool, typing.List[typing.List[pathlib.Path]]):
+	pepxml_parts_norank = [(tempdir_part / f'{infile.stem}.{output_file_extension}') for tempdir_part in tempdir_parts]
+	if all_exists(pepxml_parts_norank):
+		return False, [pepxml_parts_norank]
+	pepxml_parts_ranks = itertools.takewhile(all_exists, (
+		[(tempdir_part / f'{infile.stem}_rank{rank}.{output_file_extension}') for tempdir_part in tempdir_parts]
+		for rank in itertools.count(1)))
+	return True, list(pepxml_parts_ranks)
+
+
+def write_pepxml(infile: pathlib.Path) -> None:
 	expect_funcs = get_expect_functions(infile)
-	zip_spec_pos=zip(*[get_spectrum(tempdir_part / (infile.stem + '.' + output_file_extension)) for tempdir_part in tempdir_parts])
-	pepxml_header, = set([get_pepxml_header(tempdir_part / (infile.stem + '.' + output_file_extension)) for tempdir_part in tempdir_parts])
-	outfile = infile.with_suffix('.' + output_file_extension)
+	ranked, all_pepxmls = get_pepxmls(infile)
+	if ranked:
+		for rank, pepxml_parts in enumerate(all_pepxmls, 1):
+			write_pepxml_single_rank(infile.with_name(f'{infile.stem}_rank{rank}.{output_file_extension}'),
+									 pepxml_parts, expect_funcs)
+	else:
+		write_pepxml_single_rank(infile.with_suffix(f'.{output_file_extension}'),
+								 all_pepxmls[0], expect_funcs)
+
+
+def write_pepxml_single_rank(outfile: pathlib.Path, pepxml_parts, expect_funcs):
+	zip_spec_pos = zip(*(get_spectrum(e) for e in pepxml_parts))
+	pepxml_header, = set(get_pepxml_header(e) for e in pepxml_parts)
 	with pathlib.Path(outfile).open('wb') as f:
 		f.write(pepxml_header % (datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S').encode(), os.fspath(outfile).encode()))
 		f.write(b'\n')
 		for i, (expect_func, spectrum_query_parts) in enumerate(zip(expect_funcs, zip_spec_pos)):
 			f.writelines(new_spec(expect_func, spectrum_query_parts))
-			if i % 1024 == 0:
-				print(f'Writing: {infile.stem}\tspectrum: {i}')
+			if i % (1 << 14) == 0:
+				print(f'Writing: {outfile.stem}\tspectrum: {i}')
 		f.write(b'</msms_run_summary>\n</msms_pipeline_analysis>\n')
-
 
 def write_pin(infile):
 	if not all([(tempdir_part / (infile.stem + '.pin')).exists() for tempdir_part in tempdir_parts]):
@@ -324,12 +353,12 @@ def write_pin(infile):
 	delta_hyperscore_idx = header.index('delta_hyperscore') if 'delta_hyperscore' in header else None
 
 	pins = [read_pin(tempdir_part / (infile.stem + '.pin')) for tempdir_part in tempdir_parts]
+	ranked, all_pepxmls = get_pepxmls(infile)
 	spec_to_index_map = dict((k, int(v)) for k, v in itertools.chain.from_iterable([
 		[(spec[:spec.rindex('.')] + '.' + charge, idx)
 		 for charge, spec, idx in
-		 re.compile('<spectrum_query .*assumed_charge="(\\d+?)" .*spectrum="(.+?)" .*index="(\\d+?)"').findall(
-			 (tempdir_part / (infile.stem + '.pepXML')).read_text())]
-		for tempdir_part in tempdir_parts]))
+		 re.compile('<spectrum_query .*assumed_charge="(\\d+?)" .*spectrum="(.+?)" .*index="(\\d+?)"').findall(e.read_text())]
+		for e in itertools.chain.from_iterable(all_pepxmls)]))
 
 	d = collections.defaultdict(list)
 	for pin in pins:

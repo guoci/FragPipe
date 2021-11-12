@@ -341,7 +341,7 @@ def write_pepxml_single_rank(outfile: pathlib.Path, pepxml_parts, expect_funcs):
 				print(f'Writing: {outfile.stem}\tspectrum: {i}')
 		f.write(b'</msms_run_summary>\n</msms_pipeline_analysis>\n')
 
-def write_pin(infile):
+def write_pin(infile: pathlib.Path) -> None:
 	if not all([(tempdir_part / (infile.stem + '.pin')).exists() for tempdir_part in tempdir_parts]):
 		return
 	header = (tempdir_parts[0] / (infile.stem + '.pin')).read_text().splitlines()[0].split('\t')
@@ -355,7 +355,7 @@ def write_pin(infile):
 	pins = [read_pin(tempdir_part / (infile.stem + '.pin')) for tempdir_part in tempdir_parts]
 	ranked, all_pepxmls = get_pepxmls(infile)
 	spec_to_index_map = dict((k, int(v)) for k, v in itertools.chain.from_iterable([
-		[(spec[:spec.rindex('.')] + '.' + charge, idx)
+		[(spec[:spec.rindex('.')], idx)
 		 for charge, spec, idx in
 		 re.compile('<spectrum_query .*assumed_charge="(\\d+?)" .*spectrum="(.+?)" .*index="(\\d+?)"').findall(e.read_text())]
 		for e in itertools.chain.from_iterable(all_pepxmls)]))
@@ -382,7 +382,7 @@ def write_pin(infile):
 			row[0] = row[0].rsplit('_', 1)[0] + '_' + str(rank)
 			pep_alt_prot[row[peptide_idx]] |= set(row[proteins_idx:])-{''}
 	pep_alt_prot.default_factory = None
-	for index, hits in sorted_spectrums:
+	for index, hits in sorted_spectrums: # edit alternative proteins
 		for rank, (hyperscore, row) in enumerate(hits, 1):
 			alt_prots = pep_alt_prot[row[peptide_idx]]
 			l1, l2 = len(set(row[proteins_idx:]) - {''}), len(alt_prots)
@@ -403,7 +403,7 @@ def read_pin(p: pathlib.Path):
 		specId_idx = header.index('SpecId')
 		d = collections.defaultdict(list)
 		for row in reader:
-			d[row[specId_idx].rsplit('_', 1)[0]].append(row)
+			d[row[specId_idx].rsplit('.', 1)[0]].append(row)
 	d.default_factory = None
 	return d
 

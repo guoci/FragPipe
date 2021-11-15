@@ -181,24 +181,21 @@ re_search_hit_first_line = re.compile(rb'(?<=hit_rank=")(\d+)(?=" )'
 re_search_hit = re.compile(b'^(<search_hit.+?^</search_hit>)', re.DOTALL | re.MULTILINE)
 
 
-def step1(spec_queries: typing.Tuple[bytes]) -> (bytes, typing.List[bytes]):
+def step1(spec_queries: typing.Tuple[bytes]) -> typing.Tuple[typing.List[bytes], typing.List[typing.Tuple[int, bytes]]]:
 	'get all search hits and search hit headers'
-	spec_query_head0 = set(spectrum_query.splitlines()[0] for spectrum_query in spec_queries if len(spectrum_query) > 0)
-	if len(spec_query_head0) == 0:
-		return None
-	if len(spec_query_head0) > 1:  # skip scan when we have multiple charges
-		warnings.warn("Input file contains MS/MS scans with no precursor charge state information. All such scans will be skipped when using Split Database option.")
-		return None
-	spec_query_head, = spec_query_head0
-	search_hits = sum([re_search_hit.findall(spectrum_query) for spectrum_query in spec_queries], [])
-	search_hit_start_tags = [re_search_hit_first_line.sub(b'{}', search_hit.splitlines()[0]) for search_hit in search_hits]
+	# spec_queries = (b'<spectrum_query start_scan="44013" uncalibrated_precursor_neutral_mass="3586.6064" assumed_charge="44" spectrum="23aug2017_hela_serum_timecourse_4mz_narrow_6.44013.44013.0" end_scan="44013" index="35357" precursor_neutral_mass="3586.6172" retention_time_sec="2101.7882537841797">\n<search_result>\n<search_hit peptide="ESASSPQQERSVEQSFSSEAAGTNGEGSNQSDAAR" massdiff="2.069091796875" calc_neutral_pep_mass="3584.548" peptide_next_aa="H" num_missed_cleavages="1" num_tol_term="2" protein_descr="Nucleoprotein TPR OS=Homo sapiens OX=9606 GN=TPR PE=1 SV=3" num_tot_proteins="1" tot_num_ions="136" hit_rank="1" num_matched_ions="4" protein="rev_sp|P12270|TPR_HUMAN" peptide_prev_aa="R" is_rejected="0">\n<search_score name="hyperscore" value="9.074"/>\n<search_score name="nextscore" value="8.892"/>\n<search_score name="expect" value="2.272479e+00"/>\n</search_hit>\n</search_result>\n</spectrum_query>', b'<spectrum_query start_scan="44013" uncalibrated_precursor_neutral_mass="3586.6064" assumed_charge="4" spectrum="23aug2017_hela_serum_timecourse_4mz_narrow_6.44013.44013.0" end_scan="44013" index="35357" precursor_neutral_mass="3586.6172" retention_time_sec="2101.7882537841797">\n<search_result>\n<search_hit peptide="LPMKVALMMSDFAGGASGFPMTFSGGKFTEEWK" massdiff="-0.047119140625" calc_neutral_pep_mass="3586.6643" peptide_next_aa="A" num_missed_cleavages="2" num_tol_term="2" protein_descr="Inactive cytidine monophosphate-N-acetylneuraminic acid hydroxylase OS=Homo sapiens OX=9606 GN=CMAHP PE=1 SV=4" num_tot_proteins="1" tot_num_ions="128" hit_rank="1" num_matched_ions="4" protein="sp|Q9Y471|CMAH_HUMAN" peptide_prev_aa="R" is_rejected="0">\n<modification_info modified_peptide="LPM[147]KVALMM[147]SDFAGGASGFPMTFSGGKFTEEWK">\n<mod_aminoacid_mass mass="147.0354" position="3"/>\n<mod_aminoacid_mass mass="147.0354" position="9"/>\n</modification_info>\n<search_score name="hyperscore" value="9.873"/>\n<search_score name="nextscore" value="0.0"/>\n<search_score name="expect" value="1.434663e+00"/>\n</search_hit>\n</search_result>\n</spectrum_query>')
+	spec_query_heads = [(spectrum_query.splitlines()[0] if len(spectrum_query) > 0 else spectrum_query)
+						for spectrum_query in spec_queries]
+	search_hits = sum([[(rank if i == 0 else None, e) for i, e in enumerate(re_search_hit.findall(spectrum_query))]
+					   for rank, spectrum_query in enumerate(spec_queries)], [])
+	search_hit_start_tags = [re_search_hit_first_line.sub(b'{}', search_hit.splitlines()[0]) for rank, search_hit in search_hits]
 	header_txts = [(search_hit_tag, search_hit) for search_hit_tag, search_hit in zip(search_hit_start_tags, search_hits)]
-	d = {}
+	d = collections.defaultdict(list)
 	for header, txt in header_txts:
-		d.setdefault(header, []).append(txt)
+		d[header].append(txt)
 	for k, v in d.items():
 		d[k] = v[0]
-	return spec_query_head, list(d.values())
+	return spec_query_heads, list(d.values())
 
 
 re_scores = re.compile(b'''^<search_score name="hyperscore" value="(.+?)"/>
@@ -224,11 +221,11 @@ re_update_search_hit = re.compile(rb'''\A(.+hit_rank=")(?:.+?)("(?s:.+?))
 <search_score name="expect" value="(?:.+?)"/>
 ((?s:.+))\Z''')
 
+specinfo = collections.namedtuple('specinfo', ['massdiff', 'hyperscore', 'nextscore', 'expectscore', 'rank', 'xml'])
 def new_spec(expect_func, spectrum_query_parts):
-	spectrum_query_header__search_hits = step1(spectrum_query_parts)
-	if spectrum_query_header__search_hits is None:
+	if set(spectrum_query_parts) == {b''}:
 		return b''
-	spectrum_query_header, search_hits = spectrum_query_header__search_hits
+	spectrum_query_headers, search_hits = step1(spectrum_query_parts)
 
 	def get_scores(search_hit: bytes):
 		hyperscore, nextscore = [float(e) for e in re_scores.search(search_hit).groups()]
@@ -239,23 +236,19 @@ def new_spec(expect_func, spectrum_query_parts):
 		massdiff, hyperscore, nextscore = [float(e) for e in re_massdiff_scores.search(search_hit).groups()]
 		return massdiff, hyperscore, nextscore, expect_func(hyperscore)
 
-	def step2(search_hits: typing.List[bytes]):
-		if 0:
-			search_hit_with_scores = (get_scores(search_hit) + (search_hit,) for search_hit in search_hits)
-			# sort by hyperscore
-			sorted_search_hits0 = sorted(search_hit_with_scores, key=lambda x: x[0], reverse=True)[:output_report_topN]
-
-		search_hit_with_massdiff_and_scores = (get_massdiff_and_scores(search_hit) + (search_hit,) for search_hit in search_hits)
+	def step2(search_hits: typing.List[typing.Tuple[int, bytes]]):
+		search_hit_with_massdiff_and_scores = (specinfo._make(get_massdiff_and_scores(search_hit) + (rank, search_hit))
+											   for rank, search_hit in search_hits)
 		# sort by hyperscore and massdiff
-		sorted_search_hits0 = [e[1:] for e in
-			sorted(search_hit_with_massdiff_and_scores, key=lambda x: (1 / x[1], abs(x[0])))[:output_report_topN]]
-
-		sorted_search_hits1 = list(itertools.takewhile(lambda x: x[2] <= output_max_expect, sorted_search_hits0))
+		# sorted_search_hits0 = [e[1:] for e in
+		# 	sorted(search_hit_with_massdiff_and_scores, key=lambda x: (1 / x.hyperscore, abs(x.massdiff)))[:output_report_topN]]
+		sorted_search_hits0 = sorted(search_hit_with_massdiff_and_scores, key=lambda x: (1 / x.hyperscore, abs(x.massdiff)))[:output_report_topN]
+		sorted_search_hits1 = list(itertools.takewhile(lambda x: x.expectscore <= output_max_expect, sorted_search_hits0))
 		if len(sorted_search_hits1) == 0:
 			return [b'']
-		new_nextscores = [e[0] for e in sorted_search_hits1][1:] + [min(sorted_search_hits1, key=lambda x: x[1])[1]]
-		sorted_search_hits = [(hyperscore, new_nextscore, expectscore, search_hit)
-							  for (hyperscore, _, expectscore, search_hit), new_nextscore in
+		new_nextscores = [e.hyperscore for e in sorted_search_hits1][1:] + [min(sorted_search_hits1, key=lambda x: x.nextscore).nextscore]
+		sorted_search_hits = [specinfo._make((None, s.hyperscore, new_nextscore, s.expectscore, s.rank, s.xml))
+							  for s, new_nextscore in
 							  zip(sorted_search_hits1, new_nextscores)]
 
 		def make_new_txt(search_hit: bytes, hit_rank, hyperscore, nextscore, expectscore):
@@ -266,9 +259,11 @@ def new_spec(expect_func, spectrum_query_parts):
 \\3
 '''.encode(), search_hit)
 
-		b = [make_new_txt(search_hit, hit_rank, hyperscore, nextscore, expectscore)
-						for hit_rank, (hyperscore, nextscore, expectscore, search_hit) in enumerate(sorted_search_hits, 1)]
-		return [spectrum_query_header, b'\n<search_result>\n'] + b + [b'</search_result>\n</spectrum_query>\n']
+		b = [make_new_txt(s.xml, hit_rank, s.hyperscore, s.nextscore, s.expectscore)
+						for hit_rank, s in enumerate(sorted_search_hits, 1)]
+		# print(sorted_search_hits[0].rank)
+		# print(spectrum_query_headers)
+		return [spectrum_query_headers[sorted_search_hits[0].rank], b'\n<search_result>\n'] + b + [b'</search_result>\n</spectrum_query>\n']
 
 	return step2(search_hits)
 
@@ -555,24 +550,24 @@ sample_fasta(fasta_path, fasta_path_sample, 3)
 
 def main():
 	# mp.set_start_method('spawn')
-	set_up_directories()
-	if calibrate_mass in [1, 2]:
-		fasta_path_sample = tempdir / fasta_path.name
-		sample_fasta(fasta_path, fasta_path_sample, min(num_parts, 1))
-		calibrate_mzBIN, params_txt_new = calibrate(fasta_path_sample, calibrate_mass)
-	write_params(params_txt_new if calibrate_mass in [1, 2] else params_txt)
-	run_msfragger(calibrate_mzBIN if calibrate_mass in [1, 2] else infiles_name)
-
-	write_combined_scores_histo()
-	print(f'{generate_expect_cmd}')
-	subprocess.run(list(map(os.fspath, generate_expect_cmd)), cwd=tempdir, check=True)
+	# set_up_directories()
+	# if calibrate_mass in [1, 2]:
+	# 	fasta_path_sample = tempdir / fasta_path.name
+	# 	sample_fasta(fasta_path, fasta_path_sample, min(num_parts, 1))
+	# 	calibrate_mzBIN, params_txt_new = calibrate(fasta_path_sample, calibrate_mass)
+	# write_params(params_txt_new if calibrate_mass in [1, 2] else params_txt)
+	# run_msfragger(calibrate_mzBIN if calibrate_mass in [1, 2] else infiles_name)
+	#
+	# write_combined_scores_histo()
+	# print(f'{generate_expect_cmd}')
+	# subprocess.run(list(map(os.fspath, generate_expect_cmd)), cwd=tempdir, check=True)
 
 	combine_results()
 
-	try:
-		shutil.rmtree(tempdir)
-	except PermissionError as e:
-		print(e)
+	# try:
+	# 	shutil.rmtree(tempdir)
+	# except PermissionError as e:
+	# 	print(e)
 
 if __name__ == '__main__':
 	main()

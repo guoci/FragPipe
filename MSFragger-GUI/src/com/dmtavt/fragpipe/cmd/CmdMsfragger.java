@@ -383,9 +383,9 @@ public class CmdMsfragger extends CmdBase {
       // schedule to always try to delete the temp dir when FragPipe finishes execution
       final String tempDirName = "split_peptide_index_tempdir";
       Path toDelete = wd.resolve(tempDirName).toAbsolutePath().normalize();
-      toDelete.toFile().deleteOnExit();
-      ProcessManager.addFilesToDelete(Collections.singleton(toDelete));
-      try {
+//      toDelete.toFile().deleteOnExit();
+//      ProcessManager.addFilesToDelete(Collections.singleton(toDelete));
+      if(!true)try {
         if (Files.exists(toDelete)) {
           FileUtils.deleteDirectory(toDelete.toFile());
         }

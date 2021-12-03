@@ -618,10 +618,10 @@ def main():
 
 	combine_results()
 
-	# try:
-	# 	shutil.rmtree(tempdir)
-	# except PermissionError as e:
-	# 	print(e)
+	try:
+		shutil.rmtree(tempdir)
+	except PermissionError as e:
+		print(e)
 
 if __name__ == '__main__':
 	main()

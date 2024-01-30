@@ -27,9 +27,11 @@ import com.dmtavt.fragpipe.params.ThisAppProps;
 import com.github.chhh.utils.SwingUtils;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.Font;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -38,6 +40,9 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.ToolTipManager;
+import javax.swing.UIManager;
+import javax.swing.UnsupportedLookAndFeelException;
+
 import net.miginfocom.layout.CC;
 import net.miginfocom.layout.LC;
 import net.miginfocom.swing.MigLayout;
@@ -56,9 +61,38 @@ public class FragpipeLoader {
   private final JProgressBar progress;
   private final JFrame frameLoading;
 
+  public static void scaleFontSize(final double scaleFactor) {
+    Set<Object> keySet = UIManager.getLookAndFeelDefaults().keySet();
+    Object[] keys = keySet.toArray(new Object[keySet.size()]);
+    for (Object key : keys) {
+      if (key != null && key.toString().toLowerCase().contains("font")) {
+        Font font = UIManager.getDefaults().getFont(key);
+        if (font != null) {
+          int newSize = (int) (scaleFactor * font.getSize());
+          font = font.deriveFont((float) newSize);
+          UIManager.put(key, font);
+        }
+      }
+    }
+  }
+
+  public static void uiTweaks() {
+    // code from Integrative Genomics Viewer (IGV)
+    // https://github.com/igvteam/igv/blob/master/src/main/java/org/broad/igv/ui/Main.java
+    if (java.awt.Toolkit.getDefaultToolkit().getScreenResolution() != 96)
+      scaleFontSize(2.0);
+    try {
+      UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());
+    } catch (ClassNotFoundException | UnsupportedLookAndFeelException | IllegalAccessException |
+             InstantiationException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
   public FragpipeLoader() {
     if (!Fragpipe.headless) {
       frameLoading = new JFrame();
+      uiTweaks();
       Fragpipe.decorateFrame(frameLoading);
       frameLoading.setTitle("Starting FragPipe");
       frameLoading.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
@@ -84,6 +118,8 @@ public class FragpipeLoader {
     }
     initApplication();
   }
+
+
 
   private void initApplication() {
     Bus.post(new MessageLoaderUpdate("Loading classes"));

@@ -677,16 +677,6 @@ public class CmdMsfragger extends CmdBase {
       paramsNew.setUseTopNPeaks(Math.max(300, params.getUseTopNPeaks()));
       paramsNew.setMinimumRatio(0);
       paramsNew.setOutputReportTopN(outputReportTopNDia1);
-      paramsNew.setPrecursorTrueUnits(MassTolUnits.PPM);
-      paramsNew.setPrecursorTrueTolerance(Math.min(10, params.getPrecursorTrueTolerance()));
-      if (params.getPrecursorMassUnits() == PrecursorMassTolUnits.PPM) {
-        paramsNew.setPrecursorMassLower(Math.max(-10, params.getPrecursorMassLower()));
-        paramsNew.setPrecursorMassUpper(Math.min(10, params.getPrecursorMassUpper()));
-      } else {
-        paramsNew.setPrecursorMassUnits(PrecursorMassTolUnits.PPM);
-        paramsNew.setPrecursorMassLower(-10.0);
-        paramsNew.setPrecursorMassUpper(10.0);
-      }
     } else if (dataType.contentEquals("GPF-DIA")) {
       paramsNew.setDataType(2);
       paramsNew.setOutputReportTopN(outputReportTopNDia1);

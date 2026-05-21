@@ -300,7 +300,7 @@ public class DeNovoPanel extends JPanelBase {
     radioBuiltInModel.setName("source-built-in");
     radioBuiltInModel.setToolTipText("Run de novo prediction with a built-in model.");
 
-    radioFineTuning = new UiRadio("Perform LoRA fine-tuning", null, false);
+    radioFineTuning = new UiRadio("LoRA fine-tuning and prediction", null, false);
     radioFineTuning.setName("source-fine-tuning");
     radioFineTuning.setToolTipText("Fine-tune a LoRA adapter on this workflow's PSMs, "
         + "then run LoRA prediction using the fine-tuned weights.");

@@ -17,10 +17,14 @@
 
 package org.nesvilab.fragpipe.cmd;
 
+import static org.nesvilab.fragpipe.cmd.ToolingUtils.BATMASS_IO_JAR;
+
+import org.jooq.lambda.Seq;
 import org.nesvilab.fragpipe.Fragpipe;
 import org.nesvilab.fragpipe.FragpipeLocations;
 import org.nesvilab.fragpipe.api.InputLcmsFile;
 import org.nesvilab.fragpipe.api.LcmsFileGroup;
+import org.nesvilab.fragpipe.tools.enums.MassTolUnits;
 import org.nesvilab.utils.StringUtils;
 import org.nesvilab.utils.SwingUtils;
 import org.slf4j.Logger;
@@ -34,12 +38,13 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 public class CmdDeNovo extends CmdBase {
 
   private static final Logger log = LoggerFactory.getLogger(CmdDeNovo.class);
-  public static final String JAR_FRAGNOVO_CLIENT = "FragNovo-client-1.0.2.jar";
+  public static final String JAR_FRAGNOVO_CLIENT = "FragNovo-client-1.0.3.jar";
+  public static final String JAR_FRAGNOVO_MAIN_CLASS = "fragnovo.client.FragNovoCli";
+  public static final String[] JAR_DEPS = {BATMASS_IO_JAR};
   public static String NAME = "FragNovo";
 
   public CmdDeNovo(boolean isRun, Path workDir) {
@@ -69,7 +74,10 @@ public class CmdDeNovo extends CmdBase {
       int timeout,
       float scoreThreshold,
       String fastaPath,
-      String decoyPrefix) {
+      String decoyPrefix,
+      int threads,
+      double fragTol,
+      MassTolUnits fragTolUnit) {
 
     initPreConfig();
 
@@ -104,11 +112,11 @@ public class CmdDeNovo extends CmdBase {
       return false;
     }
 
-    final List<Path> clientJars = FragpipeLocations.checkToolsMissing(Stream.of(JAR_FRAGNOVO_CLIENT));
-    if (clientJars == null) {
+    final List<Path> classpathJars = FragpipeLocations.checkToolsMissing(Seq.of(JAR_FRAGNOVO_CLIENT).concat(JAR_DEPS));
+    if (classpathJars == null) {
       return false;
     }
-    Path fragNovoClientJar = clientJars.get(0);
+    String classpath = constructClasspathString(classpathJars);
 
     // Collect all DDA mzML file paths
     List<Path> ddaMzmlFiles = new ArrayList<>();
@@ -228,8 +236,9 @@ public class CmdDeNovo extends CmdBase {
       if (Fragpipe.headless) {
         cmdTrain.add("-Djava.awt.headless=true");
       }
-      cmdTrain.add("-jar");
-      cmdTrain.add(fragNovoClientJar.toAbsolutePath().normalize().toString());
+      cmdTrain.add("-cp");
+      cmdTrain.add(classpath);
+      cmdTrain.add(JAR_FRAGNOVO_MAIN_CLASS);
       cmdTrain.add("lora-fine-tune");
       cmdTrain.add("--url");
       cmdTrain.add(url);
@@ -264,8 +273,9 @@ public class CmdDeNovo extends CmdBase {
       if (Fragpipe.headless) {
         cmdPredict.add("-Djava.awt.headless=true");
       }
-      cmdPredict.add("-jar");
-      cmdPredict.add(fragNovoClientJar.toAbsolutePath().normalize().toString());
+      cmdPredict.add("-cp");
+      cmdPredict.add(classpath);
+      cmdPredict.add(JAR_FRAGNOVO_MAIN_CLASS);
       cmdPredict.add("predict");
       cmdPredict.add("--url");
       cmdPredict.add(url);
@@ -283,6 +293,10 @@ public class CmdDeNovo extends CmdBase {
       cmdPredict.add(String.valueOf(timeout));
       cmdPredict.add("--output-dir");
       cmdPredict.add(outputDir.toAbsolutePath().normalize().toString());
+      cmdPredict.add("--threads");
+      cmdPredict.add(String.valueOf(Math.max(1, threads)));
+      cmdPredict.add("--frag-tol");
+      cmdPredict.add(formatFragTol(fragTol, fragTolUnit));
       if (outFastaFile != null) {
         cmdPredict.add("--fasta");
         cmdPredict.add(Paths.get(fastaPath).toAbsolutePath().normalize().toString());
@@ -318,8 +332,9 @@ public class CmdDeNovo extends CmdBase {
       if (Fragpipe.headless) {
         cmdLoraPredict.add("-Djava.awt.headless=true");
       }
-      cmdLoraPredict.add("-jar");
-      cmdLoraPredict.add(fragNovoClientJar.toAbsolutePath().normalize().toString());
+      cmdLoraPredict.add("-cp");
+      cmdLoraPredict.add(classpath);
+      cmdLoraPredict.add(JAR_FRAGNOVO_MAIN_CLASS);
       cmdLoraPredict.add("lora-predict");
       cmdLoraPredict.add("--url");
       cmdLoraPredict.add(url);
@@ -339,6 +354,10 @@ public class CmdDeNovo extends CmdBase {
       cmdLoraPredict.add(String.valueOf(timeout));
       cmdLoraPredict.add("--output-dir");
       cmdLoraPredict.add(outputDir.toAbsolutePath().normalize().toString());
+      cmdLoraPredict.add("--threads");
+      cmdLoraPredict.add(String.valueOf(Math.max(1, threads)));
+      cmdLoraPredict.add("--frag-tol");
+      cmdLoraPredict.add(formatFragTol(fragTol, fragTolUnit));
       if (outFastaFile != null) {
         cmdLoraPredict.add("--fasta");
         cmdLoraPredict.add(Paths.get(fastaPath).toAbsolutePath().normalize().toString());
@@ -357,6 +376,11 @@ public class CmdDeNovo extends CmdBase {
 
     isConfigured = true;
     return true;
+  }
+
+  private static String formatFragTol(double fragTol, MassTolUnits unit) {
+    String suffix = unit == MassTolUnits.Da ? "Da" : "ppm";
+    return fragTol + suffix;
   }
 
   private Path resolveUncalibratedMzml(InputLcmsFile lcmsFile) {
